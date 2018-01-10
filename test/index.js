@@ -51,6 +51,43 @@ describe('inject()', () => {
         expect(res.rawPayload.toString()).to.equal('example.com:8080|/hello');
     });
 
+    it.only('streams non-chunked payload', async () => {
+
+        const output = 'example.com:8080|/hello';
+
+        const dispatch = function (req, res) {
+
+            res.statusMessage = 'Super';
+            res.setHeader('x-extra', 'hello');
+            res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': output.length });
+            res.end(req.headers.host + '|' + req.url);
+        };
+
+        const res = await Shot.inject(dispatch, { url: 'http://example.com:8080/hello', stream: true });
+
+        expect(res.statusCode).to.equal(200);
+        expect(res.statusMessage).to.equal(undefined);
+        expect(res.headers).to.equal(null);
+        expect(res.payload).to.equal(null);
+        expect(res.rawPayload).to.equal(null);
+
+        const payload = await internals.readStream(res);
+
+        expect(payload.toString()).to.equal('example.com:8080|/hello');
+        expect(res.statusCode).to.equal(200);
+        expect(res.statusMessage).to.equal('Super');
+        expect(res.headers.date).to.exist();
+        expect(res.headers).to.equal({
+            date: res.headers.date,
+            connection: 'keep-alive',
+            'x-extra': 'hello',
+            'content-type': 'text/plain',
+            'content-length': output.length
+        });
+        expect(res.payload).to.equal(null);
+        expect(res.rawPayload).to.equal(null);
+    });
+
     it('returns single buffer payload', async () => {
 
         const dispatch = function (req, res) {
@@ -448,13 +485,12 @@ describe('inject()', () => {
 
     it('can handle a stream payload', async () => {
 
-        const dispatch = function (req, res) {
+        const dispatch = async function (req, res) {
 
-            internals.readStream(req, (buff) => {
+            const buff = await internals.readStream(req);
 
-                res.writeHead(200, { 'Content-Type': 'text/plain' });
-                res.end(buff);
-            });
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end(buff);
         };
 
         const res = await Shot.inject(dispatch, { method: 'post', url: '/', payload: internals.getTestStream() });
@@ -463,13 +499,12 @@ describe('inject()', () => {
 
     it('can handle a stream payload of utf-8 strings', async () => {
 
-        const dispatch = function (req, res) {
+        const dispatch = async function (req, res) {
 
-            internals.readStream(req, (buff) => {
+            const buff = await internals.readStream(req);
 
-                res.writeHead(200, { 'Content-Type': 'text/plain' });
-                res.end(buff);
-            });
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end(buff);
         };
 
         const res = await Shot.inject(dispatch, { method: 'post', url: '/', payload: internals.getTestStream('utf8') });
@@ -706,15 +741,18 @@ internals.getTestStream = function (encoding) {
 };
 
 
-internals.readStream = function (stream, callback) {
+internals.readStream = function (stream) {
 
-    const chunks = [];
+    return new Promise((resolve) => {
 
-    stream.on('data', (chunk) => chunks.push(chunk));
+        const chunks = [];
 
-    stream.on('end', () => {
+        stream.on('data', (chunk) => chunks.push(chunk));
 
-        return callback(Buffer.concat(chunks));
+        stream.on('end', () => {
+
+            return resolve(Buffer.concat(chunks));
+        });
     });
 };
 
